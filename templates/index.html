@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+{% block body %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Crypto Bubbles</title>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <style>
+        body { background: #ffffff; font-family: Arial; margin:0; padding:0; }
+        #bubble-chart {
+            width: 100%;
+            height: 600px;
+            background: #f7f9fc;
+            border-radius: 12px;
+            margin: 20px auto;
+            position: relative;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.05);
+        }
+        .coin-text {
+            fill: white;
+            font-size: 11px;
+            font-weight: bold;
+            text-anchor: middle;
+            pointer-events: none;
+        }
+        .coin-pct {
+            fill: #fff;
+            font-size: 10px;
+            text-anchor: middle;
+            pointer-events: none;
+        }
+
+        /* ============================
+           POPUP STYLING (CryptoBubble style)
+        ============================ */
+        #coin-popup {
+            display:none;
+            position:fixed;
+            top:0; left:0;
+            width:100%; height:100%;
+            background:rgba(0,0,0,0.45);
+            justify-content:center;
+            align-items:center;
+            backdrop-filter: blur(4px);
+            z-index:9999;
+        }
+
+        .popup-box {
+            width:420px;
+            background:#1e1e26;
+            color:white;
+            padding:20px;
+            border-radius:14px;
+            box-shadow:0 10px 45px rgba(0,0,0,0.35);
+            animation:fadeIn .25s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {opacity:0; transform:scale(0.85);}
+            to {opacity:1; transform:scale(1);}
+        }
+
+        .close-btn {
+            float:right;
+            font-size:28px;
+            cursor:pointer;
+        }
+
+        .popup-header {
+            display:flex;
+            gap:12px;
+            align-items:center;
+            margin-bottom:12px;
+        }
+
+        .popup-header img {
+            width:40px;
+            height:40px;
+        }
+
+        #popup-title {
+            font-size:18px; 
+            font-weight:bold;
+        }
+
+        #chart-container {
+            width:100%;
+            height:150px;
+            margin-top:10px;
+        }
+
+        .stats {
+            margin-top:20px;
+            font-size:14px;
+            line-height:1.6;
+        }
+
+        .stat-label { color:#b5b5b5; }
+        .stat-value { font-weight:bold; }
+
+        .chart-btns {
+            margin-top:10px;
+            display:flex;
+            gap:10px;
+        }
+
+        .chart-btns button {
+            background:#2d2d36;
+            border:none;
+            color:white;
+            padding:6px 10px;
+            border-radius:6px;
+            cursor:pointer;
+        }
+        .chart-btns button.active {
+            background:#4c6ef5;
+        }
+    </style>
+</head>
+
+<body>
+
+<h2 style="padding-left:20px;">Crypto Bubbles</h2>
+
+<!-- =======================
+     POPUP BOX
+======================= -->
+
+<div id="coin-popup">
+    <div class="popup-box">
+
+        <span class="close-btn" onclick="closePopup()">×</span>
+
+        <div class="popup-header">
+            <img id="popup-img">
+            <div>
+                <div id="popup-title"></div>
+                <div id="popup-symbol" style="color:#bbb;font-size:13px;"></div>
+            </div>
+        </div>
+
+        <!-- Chart Buttons -->
+        <div class="chart-btns">
+            <button onclick="loadChart('1')" id="btn-1">1D</button>
+            <button onclick="loadChart('7')" id="btn-7">7D</button>
+            <button onclick="loadChart('30')" id="btn-30">1M</button>
+            <button onclick="loadChart('365')" id="btn-365">1Y</button>
+        </div>
+
+        <!-- Chart Container -->
+        <div id="chart-container"></div>
+
+        <!-- Stats -->
+        <div class="stats">
+            <div><span class="stat-label">Rank:</span> <span id="stat-rank" class="stat-value"></span></div>
+            <div><span class="stat-label">Market Cap:</span> <span id="stat-mc" class="stat-value"></span></div>
+            <div><span class="stat-label">24h Volume:</span> <span id="stat-vol" class="stat-value"></span></div>
+            <div><span class="stat-label">Price:</span> <span id="stat-price" class="stat-value"></span></div>
+            <div><span class="stat-label">% Change:</span> <span id="stat-pct" class="stat-value"></span></div>
+        </div>
+    </div>
+</div>
+
+
+<!-- =======================
+     BUBBLE CHART
+======================= -->
+<div id="bubble-chart"></div>
+
+
+<script>
+let coinsData = {}; // Global
+
+async function load() {
+
+    let API =
+        "https://api.coingecko.com/api/v3/coins/markets" +
+        "?vs_currency=usd&order=market_cap_desc&per_page=230&page=1" +
+        "&sparkline=false&price_change_percentage=24h";
+
+    let res = await fetch(API);
+    let data = await res.json();
+
+    data.forEach(c => coinsData[c.id] = c);
+
+    let coins = data.map(c => ({
+        id: c.id,
+        symbol: c.symbol.toUpperCase(),
+        pct: c.price_change_percentage_24h,
+        mc: c.market_cap,
+        img: c.image
+    }));
+
+    let width = document.getElementById("bubble-chart").clientWidth;
+    let height = document.getElementById("bubble-chart").clientHeight;
+
+    let svg = d3.select("#bubble-chart")
+                .append("svg")
+                .attr("width", width)
+                .attr("height", height);
+
+    let minCap = d3.min(coins, d=>d.mc);
+    let maxCap = d3.max(coins, d=>d.mc);
+
+    let scale = d3.scaleSqrt().domain([minCap,maxCap]).range([30,50]);
+
+    coins.forEach(c => c.r = scale(c.mc));
+
+    let sim = d3.forceSimulation(coins)
+        .force("center", d3.forceCenter(width/2, height/2))
+        .force("collide", d3.forceCollide().radius(d=>d.r + 1))
+        .force("charge", d3.forceManyBody().strength(-35))
+        .on("tick", ticked);
+
+    let node = svg.selectAll("g")
+                  .data(coins)
+                  .enter()
+                  .append("g")
+                  .attr("cursor","pointer")
+                  .on("click", bubbleClicked);
+
+    node.append("circle")
+        .attr("r", d=>d.r)
+        .attr("fill", d=> d.pct >= 0 ? "#2ecc71" : "#e74c3c")
+        .attr("stroke","#fff")
+        .attr("stroke-width",1.5);
+
+    node.append("text")
+        .attr("class","coin-text")
+        .attr("dy","4")
+        .text(d=>d.symbol);
+
+    node.append("text")
+        .attr("class","coin-pct")
+        .attr("dy","20")
+        .text(d=> (d.pct>=0?"+":"") + d.pct.toFixed(1) + "%");
+
+    function ticked() {
+        node.attr("transform", d =>
+            `translate(${d.x = Math.max(d.r, Math.min(width-d.r, d.x))},
+                       ${d.y = Math.max(d.r, Math.min(height-d.r, d.y))})`
+        );
+    }
+}
+
+/* ============================
+   POPUP OPEN
+=========================== */
+function bubbleClicked(e, d) {
+    let coin = coinsData[d.id];
+
+    document.getElementById("popup-img").src = coin.image;
+    document.getElementById("popup-title").innerText = coin.name;
+    document.getElementById("popup-symbol").innerText = coin.symbol.toUpperCase();
+
+    document.getElementById("stat-rank").innerText = coin.market_cap_rank;
+    document.getElementById("stat-mc").innerText = "$" + coin.market_cap.toLocaleString();
+    document.getElementById("stat-vol").innerText = "$" + coin.total_volume.toLocaleString();
+    document.getElementById("stat-price").innerText = "$" + coin.current_price;
+    document.getElementById("stat-pct").innerText = coin.price_change_percentage_24h.toFixed(2) + "%";
+
+    window.currentCoin = coin.id;
+    document.getElementById("coin-popup").style.display = "flex";
+
+    loadChart("1");
+}
+
+function closePopup() {
+    document.getElementById("coin-popup").style.display="none";
+}
+
+/* ============================
+   D3 POPUP LINE CHART
+=========================== */
+async function loadChart(days) {
+
+    document.querySelectorAll(".chart-btns button")
+        .forEach(b => b.classList.remove("active"));
+
+    document.getElementById("btn-" + days).classList.add("active");
+
+    let url = 
+        `https://api.coingecko.com/api/v3/coins/${window.currentCoin}/market_chart?vs_currency=usd&days=${days}`;
+
+    let res = await fetch(url);
+    let data = await res.json();
+
+    let prices = data.prices.map(d => ({ t: d[0], v: d[1] }));
+
+    drawLineChart(prices);
+}
+
+function drawLineChart(data) {
+    d3.select("#chart-container").html("");
+
+    let width = 360;
+    let height = 150;
+    let margin = {top:10, right:20, bottom:20, left:40};
+
+    let svg = d3.select("#chart-container")
+                .append("svg")
+                .attr("width", width)
+                .attr("height", height);
+
+    let x = d3.scaleTime()
+              .domain(d3.extent(data, d => d.t))
+              .range([margin.left, width - margin.right]);
+
+    let y = d3.scaleLinear()
+              .domain([d3.min(data, d=>d.v), d3.max(data, d=>d.v)])
+              .range([height - margin.bottom, margin.top]);
+
+    let line = d3.line()
+                 .x(d => x(d.t))
+                 .y(d => y(d.v))
+                 .curve(d3.curveMonotoneX);
+
+    svg.append("path")
+       .datum(data)
+       .attr("fill","none")
+       .attr("stroke","#4c6ef5")
+       .attr("stroke-width",2)
+       .attr("d",line);
+}
+
+load();
+</script>
+
+</body>
+</html>
+{% endblock body %}
